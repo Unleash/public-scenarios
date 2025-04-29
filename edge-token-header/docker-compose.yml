@@ -1,0 +1,87 @@
+services:
+  edge:
+    image: unleashorg/unleash-edge:v19.10.1
+    pull_policy: always
+    ports:
+      - "3063:3063"
+    environment:
+      UPSTREAM_URL: http://proxy:80
+      TOKEN_HEADER: EdgeAuth
+      TOKENS: "*:production.1ddd7e06dc096e4cc31353ffa4d52251e8cd8e8781ec0ee57228a11a"
+      MODE: strict
+    command: edge
+    networks:
+      - internal
+    depends_on:
+      proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "unleash-edge", "ready"]
+  proxy:
+    image: nginx:alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-logs:/var/log/nginx
+    depends_on:
+      unleash:
+        condition: service_healthy
+    networks:
+      - internal
+      - unleash
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  unleash:
+    image: docker.io/unleashorg/unleash-enterprise:latest
+    pull_policy: always
+    ports:
+      - "4242:4242"
+    environment:
+      DATABASE_URL: "postgres://postgres:unleash@db/unleash"
+      DATABASE_SSL: "false"
+      LOG_LEVEL: "debug"
+      NODE_ENV: "development"
+      INIT_ADMIN_API_TOKENS: "*:*.unleash-insecure-admin-api-token"
+      INIT_CLIENT_API_TOKENS: "*:development.unleash-insecure-client-api-token,*:production.1ddd7e06dc096e4cc31353ffa4d52251e8cd8e8781ec0ee57228a11a"
+      INIT_FRONTEND_API_TOKENS: "*:production.d8871cf9d80712c6b747ab296b74d02f2a9cef91f0f93b26ec8979fd"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:4242/health || exit 1
+      interval: 1s
+      timeout: 1m
+      retries: 5
+      start_period: 15s
+    networks:
+      - unleash
+  db:
+    expose:
+      - "5432"
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: "unleash"
+      # trust incoming connections blindly (DON'T DO THIS IN PRODUCTION!)
+      POSTGRES_HOST_AUTH_METHOD: "trust"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "pg_isready",
+          "--username=postgres",
+          "--host=127.0.0.1",
+          "--port=5432",
+        ]
+      interval: 2s
+      timeout: 1m
+      retries: 5
+      start_period: 10s
+    networks:
+      - unleash
+networks:
+  unleash:
+    name: unleash
+  internal:
+    name: internal
